@@ -20,6 +20,14 @@
 # DEPENCDENCIES FOR JOURNALCTL
 #   a) jq
 
+
+#----------------------------------------------#
+# Contents:
+# Line ~48 - Check for failed SSH attempts
+# Line ~94 - Check Sudo usage
+
+
+
 # Initial vaiables
 OUTPUT_DIR="$HOME/bashmon-logs" # Feel free to change this to desired output location
 ALERT_FILE="$OUTPUT_DIR/BashMon_alert_$(date +%Y%m%d).log"
@@ -36,6 +44,7 @@ alert() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$ALERT_FILE"
 }
 
+###   Check for failed SSH login attempts   ###
 check_ssh_attempts() {
     alert "===== Checking for Failed SSH Attempts ====="
 
@@ -50,8 +59,9 @@ check_ssh_attempts() {
     #   In this case, it probably won't be needed, but if I want the line to be read exactly as-is, this is best practice.
     while IFS= read -r line; do
         # Check if line contains "Failed password"
+        # here we use jq to check each line for "failed password" which is our main indicator
         if echo "$line" | jq -e 'select(.MESSAGE | contains("Failed password"))' > /dev/null 2>&1; then
-            failed_count=$((failed_count + 1))  # Increment counter
+            ((failed_count++))  # Increment counter
         fi
     # This line is "process substitution"
     # the <(...) structure allows you to use the output of a command as if it were a file
@@ -78,5 +88,29 @@ check_ssh_attempts() {
         alert "No Failed SSH attempt found"
     fi
 }
-    
+
 check_ssh_attempts
+    
+###   Check Sudo Usage   ###
+check_sudo_usage() {
+    alert "===== Checking for Sudo Command Usage ====="
+    
+    sudo_count=0
+    while IFS= read -r line; do
+        if echo "$line" | jq -e -r 'select(.MESSAGE | contains("COMMAND"))' > /dev/null 2>&1; then
+            ((sudo_count++))
+        fi
+    done < <(journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null)
+
+    if [ "$sudo_count" -gt 0 ]; then
+        alert "ALERT: $sudo_count sudo commands found!"
+        journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null | \
+            jq -r 'select(.MESSAGE | contains("COMMAND")) | .MESSAGE' | \
+            head -n 10 | tee -a "$ALERT_FILE"
+    else
+        alert "No sudo commands found"
+
+    fi
+}
+
+check_sudo_usage
