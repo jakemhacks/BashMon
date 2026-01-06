@@ -6,7 +6,7 @@
 # Date - 1-5-26                               #
 ###############################################
 
-### For anyone reading this, I have added TONS of comments for myself. This is purely personal as it helps me 
+### For anyone reading this, I have added TONS of comments for myself. This is purely personal as it helps me
 # review and retain what I am learning with each program.
 
 # TODO:
@@ -20,13 +20,11 @@
 # DEPENCDENCIES FOR JOURNALCTL
 #   a) jq
 
-
 #----------------------------------------------#
 # Contents:
-# Line ~48 - Check for failed SSH attempts
-# Line ~94 - Check Sudo usage
-
-
+# Line ~50 - Check for failed SSH attempts
+# Line ~100 - Check Sudo usage
+# Line ~120 - Check for system errors
 
 # Initial vaiables
 OUTPUT_DIR="$HOME/bashmon-logs" # Feel free to change this to desired output location
@@ -41,76 +39,91 @@ mkdir -p "$OUTPUT_DIR"
 # to the alert file. Keeping consistent formatting each time, all I have to do is feed it the text
 # I want written.
 alert() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$ALERT_FILE"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$ALERT_FILE"
 }
-
+###############################################
 ###   Check for failed SSH login attempts   ###
+###############################################
+
 check_ssh_attempts() {
-    alert "===== Checking for Failed SSH Attempts ====="
+  alert "===== Checking for Failed SSH Attempts ====="
 
-    # count failed attempts
-    local failed_count=0
+  # count failed attempts
+  local failed_count=0
 
-    # read journalctl line by line
-    # Note for myself: "IFS=" is the opposite of ".strip()" in python.
-    # Bash strips whitespace by default. IFS= prevents this from happening.
-    # So this basically means
-    #   While there is a line to read, don't strip the whitespace, read "\" literally, and perform the loop
-    #   In this case, it probably won't be needed, but if I want the line to be read exactly as-is, this is best practice.
-    while IFS= read -r line; do
-        # Check if line contains "Failed password"
-        # here we use jq to check each line for "failed password" which is our main indicator
-        if echo "$line" | jq -e 'select(.MESSAGE | contains("Failed password"))' > /dev/null 2>&1; then
-            ((failed_count++))  # Increment counter
-        fi
+  # read journalctl line by line
+  # Note for myself: "IFS=" is the opposite of ".strip()" in python.
+  # Bash strips whitespace by default. IFS= prevents this from happening.
+  # So this basically means
+  #   While there is a line to read, don't strip the whitespace, read "\" literally, and perform the loop
+  #   In this case, it probably won't be needed, but if I want the line to be read exactly as-is, this is best practice.
+  while IFS= read -r line; do
+    # Check if line contains "Failed password"
+    # here we use jq to check each line for "failed password" which is our main indicator
+    if echo "$line" | jq -e 'select(.MESSAGE | contains("Failed password"))' >/dev/null 2>&1; then
+      ((failed_count++)) # Increment counter
+    fi
     # This line is "process substitution"
     # the <(...) structure allows you to use the output of a command as if it were a file
     # So, I am saying, "hey, do this thing, pretend the output is a file, and feed that into the while loop to be processed"
-    done < <(journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null)
+  done < <(journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null)
 
-    if [ "$failed_count" -gt 0 ]; then
-        alert "ALERT: $failed_count failed SSH login attempts found!"
+  if [ "$failed_count" -gt 0 ]; then
+    alert "ALERT: $failed_count failed SSH login attempts found!"
 
-        # Display failed attempts
-        alert "Recent failed attempts:"
-        journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null | \
-            jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' | \
-            head -n 10 | tee -a "$ALERT_FILE"
+    # Display failed attempts
+    alert "Recent failed attempts:"
+    journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null |
+      jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' |
+      head -n 10 | tee -a "$ALERT_FILE"
 
-        # Extract attacking IPs (MOVED INSIDE IF)
-        alert "Top IPs with failed ssh attempts:"
-        journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null | \
-            jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' | \
-            grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' | \
-            sort | uniq -c | sort -rn | head -n 5 | tee -a "$ALERT_FILE"
+    # Extract attacking IPs (MOVED INSIDE IF)
+    alert "Top IPs with failed ssh attempts:"
+    journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null |
+      jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' |
+      grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' |
+      sort | uniq -c | sort -rn | head -n 5 | tee -a "$ALERT_FILE"
 
-    else
-        alert "No Failed SSH attempt found"
-    fi
+  else
+    alert "No Failed SSH attempt found"
+  fi
 }
 
 check_ssh_attempts
-    
+############################
 ###   Check Sudo Usage   ###
+############################
+
 check_sudo_usage() {
-    alert "===== Checking for Sudo Command Usage ====="
-    
-    sudo_count=0
-    while IFS= read -r line; do
-        if echo "$line" | jq -e -r 'select(.MESSAGE | contains("COMMAND"))' > /dev/null 2>&1; then
-            ((sudo_count++))
-        fi
-    done < <(journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null)
+  alert "===== Checking for Sudo Command Usage ====="
 
-    if [ "$sudo_count" -gt 0 ]; then
-        alert "ALERT: $sudo_count sudo commands found!"
-        journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null | \
-            jq -r 'select(.MESSAGE | contains("COMMAND")) | .MESSAGE' | \
-            head -n 10 | tee -a "$ALERT_FILE"
-    else
-        alert "No sudo commands found"
-
+  local sudo_count=0
+  while IFS= read -r line; do
+    if echo "$line" | jq -e -r 'select(.MESSAGE | contains("COMMAND"))' >/dev/null 2>&1; then
+      ((sudo_count++))
     fi
+  done < <(journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null)
+
+  if [ "$sudo_count" -gt 0 ]; then
+    alert "ALERT: $sudo_count sudo commands found!"
+    journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null |
+      jq -r 'select(.MESSAGE | contains("COMMAND")) | .MESSAGE' |
+      head -n 10 | tee -a "$ALERT_FILE"
+  else
+    alert "No sudo commands found"
+
+  fi
 }
 
 check_sudo_usage
+###############################
+### Check for System Errors ###
+###############################
+
+check_sys_errors() {
+  alert "===== Checking for System Errors ====="
+
+  local error_count=0
+  while IFS= read -r line; do
+    
+}
