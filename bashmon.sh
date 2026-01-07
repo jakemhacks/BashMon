@@ -39,7 +39,15 @@ mkdir -p "$OUTPUT_DIR"
 # to the alert file. Keeping consistent formatting each time, all I have to do is feed it the text
 # I want written.
 alert() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$ALERT_FILE"
+  echo -e "\e[34m$1\e[0m" | tee -a "$ALERT_FILE"
+}
+
+pos_alert() {
+  echo -e "\e[32m$1\e[0m" | tee -a "$ALERT_FILE"
+}
+
+neg_alert() {
+  echo -e "\e[31m$1\e[0m" | tee -a "$ALERT_FILE"
 }
 ###############################################
 ###   Check for failed SSH login attempts   ###
@@ -69,27 +77,31 @@ check_ssh_attempts() {
   done < <(journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null)
 
   if [ "$failed_count" -gt 0 ]; then
-    alert "ALERT: $failed_count failed SSH login attempts found!"
+
+    neg_alert "======================================================"
+    neg_alert "[ALERT: $failed_count failed SSH login attempts found!"
+    neg_alert "======================================================"
 
     # Display failed attempts
-    alert "Recent failed attempts:"
+
+    neg_alert "+++ Recent failed attempts +++"
+
     journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null |
       jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' |
       head -n 10 | tee -a "$ALERT_FILE"
 
-    # Extract attacking IPs (MOVED INSIDE IF)
-    alert "Top IPs with failed ssh attempts:"
+    # Extract attacking IPs
+    neg_alert "+++ Top IPs with failed ssh attempts +++"
     journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null |
       jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' |
       grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' |
       sort | uniq -c | sort -rn | head -n 5 | tee -a "$ALERT_FILE"
 
   else
-    alert "No Failed SSH attempt found"
+    pos_alert "No Failed SSH attempt found"
   fi
 }
 
-check_ssh_attempts
 ############################
 ###   Check Sudo Usage   ###
 ############################
@@ -105,17 +117,19 @@ check_sudo_usage() {
   done < <(journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null)
 
   if [ "$sudo_count" -gt 0 ]; then
-    alert "ALERT: $sudo_count sudo commands found!"
+
+    neg_alert "======================================="
+    neg_alert "ALERT: $sudo_count sudo commands found!"
+    neg_alert "======================================="
+
     journalctl -t sudo --since "$CHECK_TIME" -o json 2>/dev/null |
       jq -r 'select(.MESSAGE | contains("COMMAND")) | .MESSAGE' |
       head -n 10 | tee -a "$ALERT_FILE"
   else
-    alert "No sudo commands found"
-
+    pos_alert "No sudo commands found"
   fi
 }
 
-check_sudo_usage
 ###############################
 ### Check for System Errors ###
 ###############################
@@ -125,5 +139,27 @@ check_sys_errors() {
 
   local error_count=0
   while IFS= read -r line; do
-    
+    if echo "$line" | jq -e -r 'select(.MESSAGE)' >/dev/null 2>&1; then
+      ((error_count++))
+    fi
+  done < <(journalctl -p err --since "$CHECK_TIME" -o json 2>/dev/null)
+
+  if [ "$error_count" -gt 0 ]; then
+
+    neg_alert "=========================================================="
+    neg_alert "ALERT: $error_count system errors found since $CHECK_TIME!"
+    neg_alert "=========================================================="
+
+    journalctl -p err --since "$CHECK_TIME" -o short 2>/dev/null |
+      head -n 10 | tee -a "$ALERT_FILE"
+  else
+    pos_alert "ALERT: No system errors found since $CHECK_TIME"
+  fi
 }
+
+check_ssh_attempts
+echo ""
+check_sudo_usage
+echo ""
+check_sys_errors
+echo ""
