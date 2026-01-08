@@ -37,16 +37,19 @@ mkdir -p "$OUTPUT_DIR"
 # This alert function takes informational text, like "checking for failed ssh attempts" below,
 # adds a timestamp to it, then pipes it to tee so it is both printed to the terminal AND written
 # to the alert file. Keeping consistent formatting each time, all I have to do is feed it the text
-# I want written.
+# I want written. I have 3 different alerts that change the color based on use.
 alert() {
+  # blue
   echo -e "\e[34m$1\e[0m" | tee -a "$ALERT_FILE"
 }
 
 pos_alert() {
+  # green
   echo -e "\e[32m$1\e[0m" | tee -a "$ALERT_FILE"
 }
 
 neg_alert() {
+  # red
   echo -e "\e[31m$1\e[0m" | tee -a "$ALERT_FILE"
 }
 ###############################################
@@ -54,6 +57,10 @@ neg_alert() {
 ###############################################
 
 check_ssh_attempts() {
+  # 1. Set count for failed attempts
+  # 2. Set up while loop for iteration to find lines containing "failed password"
+  # 3. Feed output of all sshd events from journalctl in last hour into while loop
+  # 4. Display results
   alert "===== Checking for Failed SSH Attempts ====="
 
   # count failed attempts
@@ -71,7 +78,7 @@ check_ssh_attempts() {
     if echo "$line" | jq -e 'select(.MESSAGE | contains("Failed password"))' >/dev/null 2>&1; then
       ((failed_count++)) # Increment counter
     fi
-    # This line is "process substitution"
+    # The line below is "process substitution"
     # the <(...) structure allows you to use the output of a command as if it were a file
     # So, I am saying, "hey, do this thing, pretend the output is a file, and feed that into the while loop to be processed"
   done < <(journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null)
@@ -94,6 +101,8 @@ check_ssh_attempts() {
     neg_alert "+++ Top IPs with failed ssh attempts +++"
     journalctl -u sshd --since "$CHECK_TIME" -o json 2>/dev/null |
       jq -r 'select(.MESSAGE | contains("Failed password")) | .MESSAGE' |
+      # grep -o flag prints only the matching part of a matching line
+      # the -E flag tells grep to interpret patterns as regex
       grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' |
       sort | uniq -c | sort -rn | head -n 5 | tee -a "$ALERT_FILE"
 
@@ -107,10 +116,22 @@ check_ssh_attempts() {
 ############################
 
 check_sudo_usage() {
+  # 1. Set counter for sudo use
+  # 2. Similar loop as above, searching for "COMMAND"
+  # 3. Feed output of all sudo events in last hour into loop
+  # 4. display output
   alert "===== Checking for Sudo Command Usage ====="
 
   local sudo_count=0
   while IFS= read -r line; do
+    #### !! The jq -e flag explanation !! ####
+    # without the -e flag, jq will return 0 (which in bash = True) each time it runs without error. So even if
+    # the line does not have "COMMAND", since there was no error, it will return nothing which gets translated to 0.
+    # the -e flag makes it return "0 if the last output was neither false nor null" and "4 if no valid result was produced"
+    #
+    # So, without the -e flag, as long as there is no error, jq returns 0. which the if loop
+    # evaluates to true. with the -e flag. It returns exit code 4 when there is no valid result, the case when
+    # jq reads a line with no match and no errors..
     if echo "$line" | jq -e -r 'select(.MESSAGE | contains("COMMAND"))' >/dev/null 2>&1; then
       ((sudo_count++))
     fi
@@ -135,6 +156,10 @@ check_sudo_usage() {
 ###############################
 
 check_sys_errors() {
+  # 1. set counter
+  # 2. set up loop that prints each line
+  # 3. feed in output of all error events in last hour
+  # 4. print lines
   alert "===== Checking for System Errors ====="
 
   local error_count=0
