@@ -9,6 +9,15 @@
 ### For anyone reading this, I have added TONS of comments for myself. This is purely personal as it helps me
 # review and retain what I am learning with each program.
 
+# Purposes
+# Check for failed SSH connections
+# Check sudo usage
+# Check system errors
+# Check for new system services
+# Check for failed services
+# Check kernel messages
+# Check disk space
+
 # TODO:
 # 1. Allow user to input thier own output directory
 # 2. Add menu to select from different systems (ex. Arch - journalctl, Ubuntu - auth.log)
@@ -16,6 +25,8 @@
 # JOURNALCTL
 # For journalctl, I'm going to use json output in order for
 # it to parsed more easily than simple text output.
+# add menu for user to select whether or not to update baseline services with current_services
+#
 # #############################################
 # DEPENCDENCIES FOR JOURNALCTL
 #   a) jq
@@ -25,6 +36,7 @@
 # Line ~50 - Check for failed SSH attempts
 # Line ~100 - Check Sudo usage
 # Line ~120 - Check for system errors
+# Line ~200 - Check for new services
 
 # Initial vaiables
 OUTPUT_DIR="$HOME/bashmon-logs" # Feel free to change this to desired output location
@@ -182,9 +194,54 @@ check_sys_errors() {
   fi
 }
 
+##############################
+### Check for New Services ###
+##############################
+check_new_services() {
+  # 1. Check for a baseline of normally running services
+  #  a) if none, save current as baseline
+  #  b) if baseline, continue with comparison
+  # 2. Save currently running services
+  # 3. Compare each service to what is in the baseline
+  # 4. Save new services for display and to alert log
+  # 5. Clear current services for next scan
+  alert "===== Checking for New Services ====="
+
+  local current_services="/tmp/current_services_$$.txt"
+  local baseline_services="$OUTPUT_DIR/baseline_services.txt"
+
+  systemctl -t service --state=active --no-pager --no-legend |
+    awk '{ print $1 }' | sort >"$current_services"
+
+  if [ -f "$baseline_services" ]; then
+    # comm: -1 flag removes unique items in baseline
+    # -3 flag removes items that are in both lists
+    # compares the remaining servies to baseline list
+    local new_services=$(comm -13 "$baseline_services" "$current_services")
+
+    if [ -n "$new_services" ]; then
+      neg_alert "=========================="
+      neg_alert "ALERT: New services found!"
+      neg_alert "=========================="
+
+      echo "$new_services" | tee -a "$ALERT_FILE"
+    else
+      pos_alert "ALERT: No new services found since $CHECK_TIME"
+    fi
+    # !! create menu to ask if user wants to update baseline_services
+    cp "$current_services" "$baseline_services"
+  else
+    cp "$current_services" "$baseline_services"
+    alert "Baseline services list created ($(wc -l <"$baseline_services") services)"
+  fi
+
+  rm -f "$current_services"
+}
+
 check_ssh_attempts
 echo ""
 check_sudo_usage
 echo ""
 check_sys_errors
 echo ""
+check_new_services
