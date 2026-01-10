@@ -20,7 +20,9 @@ I am also using this project to familiarize myself with other tools like journal
 
 ## Example Scans
 Clean Scan
+---
 ![Clean Scan](/screenshots/clean-scan.png)
 
 Scan with Alerts
+---
 ![Alert Scan](/screenshots/alert-scan.png)
