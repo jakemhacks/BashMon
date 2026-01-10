@@ -18,4 +18,9 @@ I like to tinker and make things.
 I love the linux ecosystem and have wanted to learn bash scripting for a long time. So, this is my first significant project written entirely in bash.
 I am also using this project to familiarize myself with other tools like journalctl and json parsing.
 
+## Example Scans
+Clean Scan
+![Clean Scan](/screenshots/clean-scan.png)
 
+Scan with Alerts
+![Alert Scan](/screenshots/alert-scan.png)

@@ -22,7 +22,8 @@
 # 1. Allow user to input thier own output directory
 # 2. Add menu to select from different systems (ex. Arch - journalctl, Ubuntu - auth.log)
 # 3. Change logic from last hour to from time of last scan (just to avoid issues if a scan is skipped)
-# JOURNALCTL
+#
+# JOURNALCTL Systems
 # For journalctl, I'm going to use json output in order for
 # it to parsed more easily than simple text output.
 # add menu for user to select whether or not to update baseline services with current_services
@@ -37,6 +38,9 @@
 # Line ~100 - Check Sudo usage
 # Line ~120 - Check for system errors
 # Line ~200 - Check for new services
+# Line ~240 - Check for failed services
+# Line ~270 - Check for kernel Warnings
+# Line ~290 - Print summary of disk space
 
 # Initial vaiables
 OUTPUT_DIR="$HOME/bashmon-logs" # Feel free to change this to desired output location
@@ -119,7 +123,7 @@ check_ssh_attempts() {
       sort | uniq -c | sort -rn | head -n 5 | tee -a "$ALERT_FILE"
 
   else
-    pos_alert "No Failed SSH attempt found"
+    pos_alert "No Failed SSH attempt found since $CHECK_TIME"
   fi
 }
 
@@ -159,7 +163,7 @@ check_sudo_usage() {
       jq -r 'select(.MESSAGE | contains("COMMAND")) | .MESSAGE' |
       head -n 10 | tee -a "$ALERT_FILE"
   else
-    pos_alert "No sudo commands found"
+    pos_alert "No sudo commands found since $CHECK_TIME"
   fi
 }
 
@@ -190,7 +194,7 @@ check_sys_errors() {
     journalctl -p err --since "$CHECK_TIME" -o short 2>/dev/null |
       head -n 10 | tee -a "$ALERT_FILE"
   else
-    pos_alert "ALERT: No system errors found since $CHECK_TIME"
+    pos_alert "No system errors found since $CHECK_TIME"
   fi
 }
 
@@ -226,7 +230,7 @@ check_new_services() {
 
       echo "$new_services" | tee -a "$ALERT_FILE"
     else
-      pos_alert "ALERT: No new services found since $CHECK_TIME"
+      pos_alert "No new services found since $CHECK_TIME"
     fi
     # !! create menu to ask if user wants to update baseline_services
     cp "$current_services" "$baseline_services"
@@ -238,6 +242,75 @@ check_new_services() {
   rm -f "$current_services"
 }
 
+#################################
+### Check for failed services ###
+#################################
+check_failed_services() {
+  alert "===== Checking for failed services ====="
+  local failed_count=0
+  while IFS= read -r line; do
+    if echo "$line" | jq -e -r 'select(.MESSAGE) | contains("failed"))' >/dev/null 2>&1; then
+      ((failed_count++))
+    fi
+  done < <(systemctl list-units --state=failed --no-pager --no-legend -o short)
+
+  if [ $failed_count -gt 0 ]; then
+
+    neg_alert "======================================================="
+    neg_alert "===== ALERT: $failed_count failed services found! ====="
+    neg_alert "======================================================="
+
+    systemctl list-units --state=failed --no-pager --no-legend |
+      tee -a "$ALERT_FILE"
+  else
+    pos_alert "No failed services since $CHECK_TIME"
+  fi
+}
+#############################
+### Check Kernel Messages ###
+#############################
+check_kernel_messeges() {
+  alert "===== Checking Kernel Messeges ====="
+  local kernelmesg_count=$(journalctl -k -p warning --since "$CHECK_TIME" -o json 2>/dev/null |
+    jq -r '.MESSAGE' 2>/dev/null |
+    wc -l)
+
+  if [ $kernelmesg_count -gt 0 ]; then
+
+    neg_alert "===================================================="
+    neg_alert "===== ALERT: $kernelmesg_count Kernel Warnings ====="
+    neg_alert "===================================================="
+
+    journalctl -k -p warning --since "$CHECK_TIME" -o short |
+      head -n 10 |
+      tee -a "$ALERT_FILE"
+  else
+    pos_alert "No Kernel Warnings Found"
+  fi
+}
+
+##################
+### Disk Space ###
+##################
+disk_usage() {
+  alert "Disk Usage:"
+
+  local disk_usage=$(df -h / | tail -n 1 | awk '{print $5}' | sed 's/%//')
+
+  if [ "$disk_usage" -gt 80 ]; then
+    neg_alert "WARNING: Disk usage is ${disk_usage}% (threshold: 80%)"
+  else
+    pos_alert "Disk usage okay: ${disk_usage}%"
+  fi
+}
+
+alert "====================================="
+alert "BashMon System Monitor"
+alert "Checking logs from: $CHECK_TIME"
+alert "Report can be found at $ALERT_FILE"
+alert "====================================="
+
+echo ""
 check_ssh_attempts
 echo ""
 check_sudo_usage
@@ -245,3 +318,15 @@ echo ""
 check_sys_errors
 echo ""
 check_new_services
+echo ""
+check_failed_services
+echo ""
+check_kernel_messeges
+echo ""
+disk_usage
+echo ""
+
+alert "====================================="
+alert "BashMon has completed it's scan..."
+alert "Full Report saved at $ALERT_FILE"
+alert "====================================="
